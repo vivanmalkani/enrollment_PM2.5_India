@@ -1,0 +1,737 @@
+---
+title: "Air Pollution Effects on Enrollment"
+author: "Vivan Malkani"
+date: "January 15, 2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(velox)
+library(raster)
+library(readxl)
+library(tidyverse)
+library(dplyr)
+library(sf)
+library(ncdf4)
+library(tiff)
+library(RColorBrewer)
+library(lfe)
+library(rjson)
+library(ggthemes)
+library(stringr)
+library(readbulk)
+```
+
+Education outcome data source: National Institute of Educational Planning and Administration "District Report Cards". Annual enrollment for each district - includes breakdown of total enrollment by gender, caste religion, etc.
+```{r}
+#Data Cleaning
+
+education_2008 <- read_excel("2008-09_enrollment.xlsx") 
+
+education_2008 <- education_2008 %>%
+  mutate(Year = "2008") %>% 
+  dplyr::select("Year", "statename", "distname", "enr_cy_c1":"stg_enrup_cy") %>%
+  mutate(total_primary = as.integer(enr_cy_c1) + 
+           as.integer(enr_cy_c2) + 
+           as.integer(enr_cy_c3) + 
+           as.integer(enr_cy_c4) + 
+           as.integer(enr_cy_c5),
+         total_upper = as.integer(enr_cy_c6) + 
+           as.integer(enr_cy_c7) + 
+           as.integer(enr_cy_c8),
+         sc_st_primary = as.integer(`sc_enrp_cy`) + as.integer(`st_enrp_cy`),
+         sc_st_upper = as.integer(`sc_enrup_cy`) + as.integer(`st_enrup_cy`),
+         STATNAME = toupper(`statename`),
+         DISTNAME = toupper(distname)) %>%
+  dplyr::select(Year, 
+                STATNAME, 
+                DISTNAME, 
+                total_primary, 
+                total_upper, 
+                sc_st_primary, 
+                sc_st_upper)
+
+education_2009 <- read_excel("2009-10_enrollment.xlsx") 
+
+education_2009 <- education_2009 %>%
+  mutate(Year = "2009") %>% 
+  dplyr::select("Year", "Statename", "Distname", "Enr Cy C1":"Stg Enrup Cy") %>%
+  mutate(total_primary = as.integer(`Enr Cy C1`) + 
+           as.integer(`Enr Cy C2`) + 
+           as.integer(`Enr Cy C3`) + 
+           as.integer(`Enr Cy C4`) + 
+           as.integer(`Enr Cy C5`),
+         total_upper = as.integer(`Enr Cy C6`) + 
+           as.integer(`Enr Cy C7`) + 
+           as.integer(`Enr Cy C8`),
+         sc_st_primary = as.integer(`Sc Enrp Cy`) + as.integer(`St Enrp Cy`),
+         sc_st_upper = as.integer(`Sc Enrup Cy`) + as.integer(`St Enrup Cy`),
+         STATNAME = toupper(`Statename`),
+         DISTNAME = toupper(Distname)) %>%
+  dplyr::select(Year, 
+                STATNAME, 
+                DISTNAME, 
+                total_primary, 
+                total_upper, 
+                sc_st_primary, 
+                sc_st_upper)
+
+education_2010 <- read_excel("2010-11_enrollment.xlsx") 
+
+education_2010 <- education_2010 %>%
+  mutate(Year = "2010") %>% 
+  dplyr::select("Year", "State Name", "Distname", "Enr Cy C1":"Stg Enrup Cy") %>%
+  mutate(total_primary = as.integer(`Enr Cy C1`) + 
+           as.integer(`Enr Cy C2`) + 
+           as.integer(`Enr Cy C3`) + 
+           as.integer(`Enr Cy C4`) + 
+           as.integer(`Enr Cy C5`),
+         total_upper = as.integer(`Enr Cy C6`) + 
+           as.integer(`Enr Cy C7`) + 
+           as.integer(`Enr Cy C8`),
+         sc_st_primary = as.integer(`Sc Enrp Cy`) + as.integer(`St Enrp Cy`),
+         sc_st_upper = as.integer(`Sc Enrup Cy`) + as.integer(`St Enrup Cy`),
+         STATNAME = toupper(`State Name`),
+         DISTNAME = toupper(Distname)) %>%
+  dplyr::select(Year, 
+                STATNAME, 
+                DISTNAME, 
+                total_primary, 
+                total_upper, 
+                sc_st_primary, 
+                sc_st_upper)
+
+
+#Data Cleaning
+education_2011 <- read_excel("DRC_Raw_Data 2011-12.xlsx", sheet = 3) %>% slice(17:n())
+colnames(education_2011) <- education_2011[1,]
+
+#Need to aggregate enrollment by class into "primary" and "upper primary", using schema of classes 1:5 as primary and 6:8 as upper primary. Also combining scheduled caste and tribe enrollment into one bin.
+education_2011 <- education_2011 %>% 
+  slice(2:n()) %>% 
+  mutate(Year = "2011") %>%
+  dplyr::select("Year", "State Name", "distname", "Enr Cy C1":"Stg Enrup Cy") %>%
+  mutate(total_primary = as.integer(`Enr Cy C1`) + 
+           as.integer(`Enr Cy C2`) + 
+           as.integer(`Enr Cy C3`) + 
+           as.integer(`Enr Cy C4`) + 
+           as.integer(`Enr Cy C5`),
+         total_upper = as.integer(`Enr Cy C6`) + 
+           as.integer(`Enr Cy C7`) + 
+           as.integer(`Enr Cy C8`),
+         sc_st_primary = as.integer(`Sc Enrp Cy`) + as.integer(`St Enrp Cy`),
+         sc_st_upper = as.integer(`Sc Enrup Cy`) + as.integer(`St Enrup Cy`),
+         STATNAME = toupper(`State Name`),
+         DISTNAME = toupper(distname)) %>%
+  dplyr::select(Year, 
+                STATNAME, 
+                DISTNAME, 
+                total_primary, 
+                total_upper, 
+                sc_st_primary, 
+                sc_st_upper)
+
+education_2012 <- read_excel("DRC_Raw_Data 2012-13.xlsx", sheet = 3) %>% slice(17:n())
+colnames(education_2012) <- education_2012[1,]
+education_2012 <- education_2012 %>% 
+  slice(2:n()) %>% 
+  mutate(Year = "2012") %>%
+  dplyr::select(Year, "State Name", "distname", "Enr Cy C1": "Stg Enrup Cy") %>%
+  mutate(total_primary = as.integer(`Enr Cy C1`) + 
+           as.integer(`Enr Cy C2`) + 
+           as.integer(`Enr Cy C3`) + 
+           as.integer(`Enr Cy C4`) + 
+           as.integer(`Enr Cy C5`),
+         total_upper = as.integer(`Enr Cy C6`) + 
+           as.integer(`Enr Cy C7`) + 
+           as.integer(`Enr Cy C8`),
+         sc_st_primary = as.integer(`Sc Enrp Cy`) + as.integer(`St Enrp Cy`),
+         sc_st_upper = as.integer(`Sc Enrup Cy`) + as.integer(`St Enrup Cy`),
+         STATNAME = toupper(`State Name`),
+         DISTNAME = toupper(distname)) %>%
+  dplyr::select(Year, 
+                STATNAME, 
+                DISTNAME, 
+                total_primary, 
+                total_upper, 
+                sc_st_primary, 
+                sc_st_upper)
+
+education_2013 <- read_excel("DRC_Raw_Data 2013-14.xlsx", sheet = 3) %>% slice(17:n())
+colnames(education_2013) <- education_2013[1,]
+education_2013 <- education_2013 %>%
+  slice(2:n()) %>%
+  mutate(Year = "2013") %>%
+  dplyr::select(Year, "State Name", "distname", "Enr Cy C1": "Stg Enrup Cy") %>%
+  mutate(total_primary = as.integer(`Enr Cy C1`) + 
+           as.integer(`Enr Cy C2`) + 
+           as.integer(`Enr Cy C3`) + 
+           as.integer(`Enr Cy C4`) + 
+           as.integer(`Enr Cy C5`),
+         total_upper = as.integer(`Enr Cy C6`) + 
+           as.integer(`Enr Cy C7`) + 
+           as.integer(`Enr Cy C8`),
+         sc_st_primary = as.integer(`Sc Enrp Cy`) + as.integer(`St Enrp Cy`),
+         sc_st_upper = as.integer(`Sc Enrup Cy`) + as.integer(`St Enrup Cy`),
+         STATNAME = toupper(`State Name`),
+         DISTNAME = toupper(distname)) %>%
+  dplyr::select(Year, 
+                STATNAME, 
+                DISTNAME, 
+                total_primary, 
+                total_upper, 
+                sc_st_primary, 
+                sc_st_upper)
+
+enrollment_data <- bind_rows(education_2008,
+                             education_2009,
+                             education_2010,
+                             education_2011,
+                             education_2012,
+                             education_2013)
+
+rm(education_2008,
+   education_2009,
+   education_2010,
+   education_2011,
+   education_2012,
+   education_2013)
+
+write.csv(enrollment_data, "enrollment_08-13.csv", row.names = FALSE)
+```
+
+India districts shapefile and PM2.5 data.
+India map: Database of Global Administrative Areas
+PM 2.5: Global Annual PM2.5 Grids from MODIS, MISR and SeaWiFS Aerosol Optical Depth (AOD) with GWR, v1 (1998-2016)
+```{r}
+india_districts = read_rds("gadm36_IND_2_sp.rds")
+india_districts@data
+
+#read in distinct global annual PM2.5 files and limit extent to India
+pm25_2008= raster("gwr_pm25_2008.tif") %>% crop(extent(india_districts))
+pm25_2009= raster("gwr_pm25_2009.tif") %>% crop(extent(india_districts))
+pm25_2010= raster("gwr_pm25_2010.tif") %>% crop(extent(india_districts))
+pm25_2011= raster("gwr_pm25_2011.tif") %>% crop(extent(india_districts))
+pm25_2012= raster("gwr_pm25_2012.tif") %>% crop(extent(india_districts))
+pm25_2013= raster("gwr_pm25_2013.tif") %>% crop(extent(india_districts))
+
+pm_velox08 <- velox(pm25_2008) 
+pm_velox09 <- velox(pm25_2009)
+pm_velox10 <- velox(pm25_2010)
+pm_velox11 <- velox(pm25_2011) 
+pm_velox12 <- velox(pm25_2012)
+pm_velox13 <- velox(pm25_2013)
+
+#extract PM2.5 reading for each district polygon for each year
+pmVals_08 <- pm_velox08$extract(sp = india_districts, small = T)  #pm 2.5 readings for each district
+pmVals_09 <- pm_velox09$extract(sp = india_districts, small = T)
+pmVals_10 <- pm_velox10$extract(sp = india_districts, small = T)
+pmVals_11 <- pm_velox11$extract(sp = india_districts, small = T)
+pmVals_12 <- pm_velox12$extract(sp = india_districts, small = T)
+pmVals_13 <- pm_velox13$extract(sp = india_districts, small = T)
+
+#mean pm 2.5 reading for each district for each year
+india_districts@data$pm08 <- lapply(pmVals_08, function(x){median(x, na.rm = T)}) %>% 
+  unlist() 
+india_districts@data$pm09 <- lapply(pmVals_09, function(x){median(x, na.rm = T)}) %>% 
+  unlist() 
+india_districts@data$pm10 <- lapply(pmVals_10, function(x){median(x, na.rm = T)}) %>% 
+  unlist() 
+india_districts@data$pm11 <- lapply(pmVals_11, function(x){median(x, na.rm = T)}) %>% 
+  unlist() 
+india_districts@data$pm12 <- lapply(pmVals_12, function(x){median(x, na.rm = T)}) %>% 
+  unlist() 
+india_districts@data$pm13 <- lapply(pmVals_13, function(x){median(x, na.rm = T)}) %>% 
+  unlist() 
+
+
+india_districts_sf <- st_as_sf(india_districts)
+#st_write(india_districts_sf, "india_districts.shp")
+
+rm(pm_velox11, pm_velox12, pm_velox13, 
+   pmVals_11, pmVals_12, pmVals_13,
+   pm25_2011, pm25_2012, pm25_2013)
+rm(pm_velox08, pm_velox09, pm_velox10, 
+   pmVals_08, pmVals_09, pmVals_10,
+   pm25_2008, pm25_2009, pm25_2010)
+```
+
+Downloading economic activity proxy: Night lights for economic activity proxy
+```{r}
+states = fromJSON(file = "http://api.nightlights.io/months/2008.1-2013.12/states")
+state_names = vector()
+for(i in 1:length(states)){
+  state_names[i] = states[[i]]$key
+}
+state_names = state_names %>% unique()
+
+start_link = "http://api.nightlights.io/months/2008.1-2013.12/states/"
+end_link = "/districts"
+
+nightlights_districts = tibble("DISTNAME" = NA, "year" = NA, "month" = NA, "vis_median" = NA, "count" = NA)
+
+for(i in 1:length(state_names)){
+  state_data <- fromJSON(file = paste0(start_link,state_names[i],end_link))
+  for(j in 1:length(state_data)){
+    nightlights_districts = rbind(nightlights_districts, 
+                                  c(state_data[[j]]$key,
+                                    state_data[[j]]$year,
+                                    state_data[[j]]$month,
+                                    state_data[[j]]$vis_median,
+                                    state_data[[j]]$count))
+  }
+}
+nightlights_districts = slice(nightlights_districts, 2:n())
+
+
+#Converting to annual mean median visual intensity score for each district-year
+
+nightlights_annual = nightlights_districts %>% 
+  group_by(DISTNAME, year) %>%
+  summarise(vis_median = median(as.numeric(vis_median)),
+            total_count = sum(as.numeric(count))) %>% 
+  arrange(DISTNAME, year)
+state_names <- state_names %>% sort()
+
+nightlights_annual$STATNAME = NA
+for(i in 1:length(state_names)){
+  for(j in 1:nrow(nightlights_annual)){
+    if(str_detect(nightlights_annual$DISTNAME[j], state_names[i])) {
+      nightlights_annual$DISTNAME[j] = str_remove(nightlights_annual$DISTNAME[j], 
+                                                  paste0(state_names[i], 
+                                                         "-")) %>% 
+        str_replace_all("-", " ") %>%
+        toupper()
+      nightlights_annual$STATNAME[j] = str_replace_all(state_names[i], "-", " ") %>% 
+        toupper()
+    }
+  }
+}
+
+write.csv(nightlights_annual, "nightlights_annual_08-13.csv", row.names = FALSE)
+#nightlights_annual = read_csv("nightlights_annual_08-13.csv", col_types = cols("year" = "f"))
+
+```
+
+
+The Merge: joining by district name. Not using districts which have no education data.
+```{r}
+
+district_data = bind_cols("DISTNAME" = toupper(india_districts@data$NAME_2),
+                          "STATNAME" = toupper(india_districts@data$NAME_1),
+                          "2008" = india_districts@data$pm08,
+                          "2009" = india_districts@data$pm09,
+                          "2010" = india_districts@data$pm10,
+                          "2011" = india_districts@data$pm11,
+                          "2012" = india_districts@data$pm12,
+                          "2013" = india_districts@data$pm13)
+
+d_names = district_data$STATNAME %>% unique() %>% sort()
+e_names = enrollment_data$STATNAME %>% unique() %>% sort()
+
+#Name alignment for join
+d_names[!d_names %in% e_names]
+e_names[!e_names %in% d_names]
+
+enrollment_data = enrollment_data %>%
+  mutate(
+    STATNAME = case_when(
+      STATNAME == "A & N ISLANDS"|
+        STATNAME == "ANDAMAN & NICOBAR ISLANDS" ~ "ANDAMAN AND NICOBAR",
+      STATNAME == "CHHATISGARH" ~ "CHHATTISGARH",
+      STATNAME == "D & N HAVELI"|
+        STATNAME == "DADRA & NAGAR HAVELI" ~ "DADRA AND NAGAR HAVELI",
+      STATNAME == "DAMAN & DIU" ~ "DAMAN AND DIU",
+      STATNAME == "ORISSA" ~ "ODISHA",
+      STATNAME == "JAMMU & KASHMIR" ~ "JAMMU AND KASHMIR",
+      STATNAME == "DELHI" ~ "NCT OF DELHI",
+      TRUE ~ STATNAME
+    )
+  )
+# 
+# #Now Districts
+
+d_names = district_data$DISTNAME %>% unique() %>% sort()
+e_names = enrollment_data$DISTNAME %>% unique() %>% sort()
+
+#Name alignment for join
+d_names[!d_names %in% e_names]
+e_names[!e_names %in% d_names]
+
+rm(d_names, e_names)
+
+district_data <- gather(district_data, "Year", "PM_25", -c(STATNAME, DISTNAME))
+
+#for now, disregard all spelling inconsistencies between districts in each data set
+educ_PM = inner_join(district_data,
+                     enrollment_data, 
+                     by = c("DISTNAME", "STATNAME", "Year"))
+
+head(educ_PM, 5)
+```
+
+CENSUS data
+```{r}
+#Population data (Census 2011) to convert enrollment to rate
+census = read_excel("DDW_PCA0000_2011_Indiastatedist.xlsx", sheet = 1)
+
+households = census %>% 
+  select(Level, Name, TRU, P_SC, P_ST, TOT_P) %>% 
+  filter(Level == "DISTRICT" & TRU == "Total") %>%
+  mutate(DISTNAME = toupper(Name)) %>%
+  select(-Name, -Level, -TRU)
+
+educ_PM_census = inner_join(educ_PM,
+                            households, 
+                            by = c("DISTNAME"))
+
+educ_PM_census <- educ_PM_census %>% 
+  mutate(SCST_total_rate = (sc_st_primary + sc_st_upper)/(P_SC + P_ST),
+         total_rate = (total_upper + total_primary) / TOT_P,
+         total_per = (total_upper + total_primary)/100000,
+         SCST_per = (sc_st_primary + sc_st_upper)/100000)
+
+rm(educ_PM, census)
+```
+
+Bringing in night light controls
+```{r}
+
+d_names = educ_PM_census$STATNAME %>% unique() %>% sort()
+e_names = nightlights_annual$STATNAME %>% unique() %>% sort()
+
+#Name alignment for join
+d_names[!d_names %in% e_names]
+e_names[!e_names %in% d_names]
+
+nightlights_annual = nightlights_annual %>%
+  mutate(STATNAME = as.character(STATNAME),
+         DISTNAME = as.character(DISTNAME),
+         year = as.character(year))
+
+nightlights_annual = nightlights_annual %>%
+  mutate(STATNAME = case_when(
+      STATNAME == "TAMILNADU" ~ "TAMIL NADU",
+      STATNAME == "ORISSA" ~ "ODISHA",
+      STATNAME == "JAMMU & KASHMIR" ~ "JAMMU AND KASHMIR",
+      STATNAME == "DELHI" ~ "NCT OF DELHI",
+      TRUE ~ STATNAME))
+
+enroll_rate_PM_controls = inner_join(educ_PM_census, nightlights_annual, by = c("DISTNAME", "STATNAME", "Year" = "year"))
+
+write_csv(enroll_rate_PM_controls, "enrollment_PM_NL_08-13.csv")
+rm(educ_PM_census)
+```
+
+
+Validation of NL estimates at state level
+```{r}
+state_GDP = read_xlsx("state_GDP_validation.xlsx")
+state_GDP = gather(state_GDP, "year", value = "GDP", -"State\\UT") %>% 
+  rename(state = "State\\UT")
+
+state_GDP = state_GDP %>%
+  mutate(year = case_when(year == "2011-12" ~ "2011",
+                          year == "2012-13" ~ "2012",
+                          year == "2013-14" ~ "2013",
+                          TRUE ~ year)) %>%
+  select(state, year, GDP) %>% 
+  mutate(state = toupper(state))
+
+states = fromJSON(file = "http://api.nightlights.io/months/2011.1-2013.12/states")
+nightlights_states = tibble("state" = NA, "year" = NA, "month" = NA, "vis_median" = NA, "count" = NA)
+
+for(i in 1:length(states)){
+    nightlights_states = rbind(nightlights_states, 
+                                  c(states[[i]]$key,
+                                    states[[i]]$year,
+                                    states[[i]]$month,
+                                    states[[i]]$vis_median,
+                                    states[[i]]$count))
+  }
+nightlights_states = slice(nightlights_states, 2:n())
+
+
+#Converting to annual mean median visual intensity score for each district-year
+
+nightlights_states = nightlights_states %>% 
+  group_by(state, year) %>%
+  summarise(vis_median = median(as.numeric(vis_median)),
+            total_count = sum(as.numeric(count))) %>% 
+  arrange(state, year)
+
+nightlights_states <- nightlights_states %>% ungroup() %>%
+  mutate(state = str_replace_all(state, "-", " ") %>% 
+        toupper())
+
+d_names = state_GDP$state %>% unique() %>% sort()
+e_names = nightlights_states$state %>% unique() %>% sort()
+
+#Name alignment for join
+d_names[!d_names %in% e_names]
+e_names[!e_names %in% d_names]
+
+nightlights_states = nightlights_states %>%
+  mutate(state = case_when(
+      state == "TAMILNADU" ~ "TAMIL NADU",
+      state == "ORISSA" ~ "ODISHA",
+      state == "WEST BENGAL" ~ "WEST BENGAL1",
+      TRUE ~ state))
+
+NL_GDP_state = inner_join(nightlights_states, state_GDP, 
+                    by = c("state", "year"))
+
+```
+
+District level NL and GDP data input and wrangling
+```{r}
+Andhra_GDP = read_csv("Andhra_GDP.csv") %>% mutate(STATNAME = "ANDHRA PRADESH")
+Assam_GDP = read_csv("Assam_GDP.csv") %>% mutate(STATNAME = "ASSAM")
+Bihar_GDP = read_csv("Bihar_GDP.csv") %>% mutate(STATNAME = "BIHAR")
+Karnataka_GDP = read_csv("Karnataka_GDP.csv") %>% mutate(STATNAME = "KARNATAKA")
+Kerala_GDP = read_csv("Kerala_GDP.csv") %>% mutate(STATNAME = "KERALA")
+Maha_GDP = read_csv("Maha_GDP.csv") %>% mutate(STATNAME = "MAHARASHTRA")
+Odisha_GDP = read_csv("Odisha_GDP.csv") %>% mutate(STATNAME = "ODISHA")
+Punjab_GDP = read_csv("Punjab_GDP.csv") %>% mutate(STATNAME = "PUNJAB")
+Rajasthan_GDP = read_csv("Rajasthan_GDP.csv") %>% mutate(STATNAME = "RAJASTHAN")
+UP_GDP = read_csv("UP_GDP.csv") %>% mutate(STATNAME = "UTTAR PRADESH")
+WB_GDP = read_csv("WB_GDP.csv") %>% select(Year:"Uttar Dinajpur") %>% mutate(STATNAME = "WEST BENGAL")
+
+Andhra_GDP = gather(Andhra_GDP, key = "DISTNAME", value = "GDP", -STATNAME, -Year, -Description) 
+Assam_GDP = gather(Assam_GDP, key = "DISTNAME", value = "GDP", -STATNAME, -Year, -Description)
+Bihar_GDP = gather(Bihar_GDP, key = "DISTNAME", value = "GDP", -STATNAME, -Year, -Description)
+Karnataka_GDP = gather(Karnataka_GDP, key = "DISTNAME", value = "GDP", -STATNAME, -Year, -Description)
+Kerala_GDP = gather(Kerala_GDP, key = "DISTNAME", value = "GDP", -STATNAME, -Year, -Description)
+Maha_GDP = gather(Maha_GDP, key = "DISTNAME", value = "GDP", -STATNAME, -Year, -Description)
+Odisha_GDP = gather(Odisha_GDP, key = "DISTNAME", value = "GDP", -STATNAME, -Year, -Description)
+Punjab_GDP = gather(Punjab_GDP, key = "DISTNAME", value = "GDP", -STATNAME, -Year, -Description)
+Rajasthan_GDP = gather(Rajasthan_GDP, key = "DISTNAME", value = "GDP", -STATNAME, -Year, -Description)
+UP_GDP = gather(UP_GDP, key = "DISTNAME", value = "GDP", -STATNAME, -Year, -Description)
+WB_GDP = gather(WB_GDP, key = "DISTNAME", value = "GDP", -STATNAME, -Year, -Description)
+
+district_GDP = bind_rows(Andhra_GDP, 
+                         Assam_GDP, 
+                         Bihar_GDP, 
+                         Karnataka_GDP, 
+                         Kerala_GDP,
+                         Maha_GDP,
+                         Odisha_GDP,
+                         Punjab_GDP,
+                         Rajasthan_GDP,
+                         UP_GDP,
+                         WB_GDP)
+
+district_GDP = district_GDP %>% 
+  filter(Description == "GDP (in Rs. Cr.)") %>%
+  mutate(Year = case_when(Year == "2004-05" ~ "2004",
+                          Year == "2005-06" ~ "2005",
+                          Year == "2006-07" ~ "2006",
+                          Year == "2007-08" ~ "2007",
+                          Year == "2008-09" ~ "2008",
+                          Year == "2009-10" ~ "2009",
+                          Year == "2010-11" ~ "2010",
+                          Year == "2011-12" ~ "2011",
+                          Year == "2012-13" ~ "2012",
+                          TRUE ~ Year)) %>%
+  select(DISTNAME, STATNAME, Year, GDP) %>% 
+  mutate(DISTNAME = toupper(DISTNAME))
+
+
+states = fromJSON(file = "http://api.nightlights.io/months/2004.1-2012.12/states")
+state_names = vector()
+for(i in 1:length(states)){
+  state_names[i] = states[[i]]$key
+}
+state_names = state_names %>% unique()
+
+state_names = state_names[c(1,2,3,5,10,14,16,18,19,25,28)]
+
+start_link = "http://api.nightlights.io/months/2004.1-2012.12/states/"
+end_link = "/districts"
+
+nightlights_districts = tibble("DISTNAME" = NA, "year" = NA, "month" = NA, "vis_median" = NA, "count" = NA)
+
+for(i in 1:length(state_names)){
+  state_data <- fromJSON(file = paste0(start_link,state_names[i],end_link))
+  for(j in 1:length(state_data)){
+    nightlights_districts = rbind(nightlights_districts, 
+                                  c(state_data[[j]]$key,
+                                    state_data[[j]]$year,
+                                    state_data[[j]]$month,
+                                    state_data[[j]]$vis_median,
+                                    state_data[[j]]$count))
+  }
+}
+nightlights_districts = slice(nightlights_districts, 2:n())
+
+
+#Converting to annual mean median visual intensity score for each district-year
+
+nightlights_annual = nightlights_districts %>% 
+  group_by(DISTNAME, year) %>%
+  summarise(vis_median = median(as.numeric(vis_median)),
+            total_count = sum(as.numeric(count))) %>% 
+  arrange(DISTNAME, year)
+state_names <- state_names %>% sort()
+
+nightlights_annual$STATNAME = NA
+for(i in 1:length(state_names)){
+  for(j in 1:nrow(nightlights_annual)){
+    if(str_detect(nightlights_annual$DISTNAME[j], state_names[i])) {
+      nightlights_annual$DISTNAME[j] = str_remove(nightlights_annual$DISTNAME[j], 
+                                                  paste0(state_names[i], 
+                                                         "-")) %>% 
+        str_replace_all("-", " ") %>%
+        toupper()
+      nightlights_annual$STATNAME[j] = str_replace_all(state_names[i], "-", " ") %>% 
+        toupper()
+    }
+  }
+}
+
+```
+
+Merging NL and district level GDP data for 12 states - name merges
+```{r}
+
+d_names = district_GDP$DISTNAME %>% unique() %>% sort()
+e_names = nightlights_annual$DISTNAME %>% unique() %>% sort()
+
+#Name alignment for join
+d_names[!d_names %in% e_names]
+e_names[!e_names %in% d_names]
+
+nightlights_annual = nightlights_annual %>% 
+  ungroup() %>%
+  mutate(STATNAME = as.character(STATNAME),
+         DISTNAME = as.character(DISTNAME),
+         year = as.character(year))
+
+nightlights_annual = nightlights_annual %>%
+  mutate(STATNAME = case_when(
+      STATNAME == "ORISSA" ~ "ODISHA",
+      TRUE ~ STATNAME),
+      DISTNAME = case_when(
+      DISTNAME == "AHMADNAGAR" ~ "AHMEDNAGAR",
+      DISTNAME == "ANUGUL" ~ "ANGUL",
+      DISTNAME == "AURAIYA" ~ "AURAIYYA",
+      DISTNAME == "BAGALKOT" ~ "BAGALKOTE",
+      DISTNAME == "BAGHPAT" ~ "BAGPAT",
+      DISTNAME == "BANGALORE" ~ "BANGALORE URBAN",
+      DISTNAME == "BARDDHAMAN" ~ "BURDWAN",
+      DISTNAME == "BAUDH" ~ "BOUDH",
+      DISTNAME == "BID" ~ "BEED",
+      DISTNAME == "BUDAUN" ~ "BADAUN",
+      DISTNAME == "BULANDSHAHAR" ~ "BULAND SHAHAR",
+      DISTNAME == "BULDANA" ~ "BULDHANA",
+      DISTNAME == "CHIKKABALLAPURA" ~ "CHICKBALLAPUR",
+      DISTNAME == "CHIKMAGALUR" ~ "CHICKMAGALUR",
+      DISTNAME == "CHITTAURGARH" ~ "CHITTORGARH",
+      DISTNAME == "COOCH BIHAR" ~ "COOCH BEHAR",
+      DISTNAME == "DARJILING" ~ "DARJEELING",
+      DISTNAME == "DAVANAGERE" ~ "DAVANGERE",
+      DISTNAME == "DHAULPUR" ~ "DHOLPUR",
+      DISTNAME == "EAST GODAVARI" ~ "GODAVARI EAST",
+      DISTNAME == "ERNAKULAM" ~ "ERANAKULAM",
+      DISTNAME == "FIROZPUR" ~ "FIROZEPUR",
+      DISTNAME == "GANGANAGAR" ~ "GANGA NAGAR",
+      DISTNAME == "GAUTAM BUDDHA NAGAR" ~ "GAUTAMBUDH NAGAR",
+      DISTNAME == "GONDIYA" ~ "GONDIA",
+      DISTNAME == "GOPALGANJ" ~ "GOPALGANG",
+      DISTNAME == "HAORA" ~ "HOWRAH",
+      DISTNAME == "HUGLI" ~ "HOOGHLY",
+      DISTNAME == "JHUNJHUNUN" ~ "JHUNJHUNU",
+      DISTNAME == "JAGATSINGHAPUR" ~ "JAGATSINGHPUR",
+      DISTNAME == "JAJAPUR" ~ "JAJPUR",
+      DISTNAME == "JALOR" ~ "JALORE",
+      DISTNAME == "KAMRUP" ~ "KAMRUP RURAL",
+      DISTNAME == "KAMRUP METROPOLITAN" ~ "KAMRUP (METROPOLITAN)",
+      DISTNAME == "KARBI ANGLONG" ~ "KARBI-ANGLONG",
+      DISTNAME == "KISHANGANJ" ~ "KISHANGANG",
+      DISTNAME == "KUSHINAGAR" ~ "KUSHI NAGAR",
+      DISTNAME == "MAHBUBNAGAR" ~ "MAHABUBNAGAR",
+      DISTNAME == "MAHRAJGANJ" ~ "MAHARAJ GANJ",
+      DISTNAME == "MALDAH" ~ "MALDA",
+      DISTNAME == "MARIGAON" ~ "MORIGAON",
+      DISTNAME == "NABARANGAPUR" ~ "NABARANGPUR",
+      DISTNAME == "NAYAGARH" ~ "NAYARGARH",
+      DISTNAME == "NIZAMABAD" ~ "NIZAMBAD",
+      DISTNAME == "NORTH TWENTY FOUR PARGANAS" ~ "24-PARGANAS (NORTH)",
+      DISTNAME == "PASCHIM MEDINIPUR" ~ "MIDNAPORE WEST",
+      DISTNAME == "PASHCHIM CHAMPARAN" ~ "WEST CHAMPARAN",
+      DISTNAME == "PURBA CHAMPARAN" ~ "EAST CHAMPARAN",
+      DISTNAME == "PURBA MEDINIPUR" ~ "MIDNAPORE EAST",
+      DISTNAME == "PURNIA" ~ "PURNEA",
+      DISTNAME == "PURULIYA" ~ "PURULIA",
+      DISTNAME == "RAIGARH" ~ "RAIGAD",
+      DISTNAME == "RAMANAGARA" ~ "RAMNAGARA",
+      DISTNAME == "RUPNAGAR" ~ "ROOPNAGAR",
+      DISTNAME == "SAMASTIPUR" ~ "SAMSTIPUR",
+      DISTNAME == "SANT KABIR NAGAR" ~ "SANT KABEER MAHARAJ GANJ",
+      DISTNAME == "SANT RAVIDAS NAGAR (BHADOHI)" ~ "SANT RAVI DAS NAGAR",
+      DISTNAME == "SHEIKHPURA" ~ "SHEKHPURA",
+      DISTNAME == "SHRAWASTI" ~ "SHRAVASTI",
+      DISTNAME == "SIBSAGAR" ~ "SIVASAGAR",
+      DISTNAME == "SIDDHARTH NAGAR" ~ "SIDDARTH NAGAR",
+      DISTNAME == "SOUTH TWENTY FOUR PARGANAS" ~ "24-PARGANAS (SOUTH)",
+      DISTNAME == "TARN TARAN" ~ "TARAN TARN",
+      DISTNAME == "UTTARA KANNADA" ~ "UTTARA KANNADS",
+      DISTNAME == "VISAKHAPATNAM" ~ "VISAKAPATNAM",
+      DISTNAME == "WASHIM"~ "WAHIM",
+      DISTNAME == "WEST BENGAL KOCH BIHAR" ~ "COOCH BIHAR",
+      DISTNAME == "WEST GODAVARI" ~ "GODAVARI WEST",
+      DISTNAME == "YADGIR"~ "YADAGIRI",
+      TRUE ~ DISTNAME))
+
+NL_GDP = inner_join(district_GDP, nightlights_annual, by = c("DISTNAME", "STATNAME", "Year" = "year"))
+
+write_csv(NL_GDP, "NL_GDP_validation.csv")
+
+```
+
+Testing if night lights is a good proxy
+```{r}
+
+NL_test = NL_GDP %>%
+  mutate(log_vis = log(vis_median+2)) %>%
+  mutate(Year = as.factor(Year))
+
+simple_model = lm(GDP~log_vis + total_count, data = NL_test)
+summary(simple_model)
+
+dist_fe_model = felm(GDP~log_vis + total_count|DISTNAME, data = NL_test)
+summary(dist_fe_model)
+
+year_fe_model = felm(GDP~log_vis + total_count|Year, data = NL_test)
+summary(year_fe_model)
+
+both_fe_model = felm(GDP~log_vis + total_count|Year + DISTNAME, data = NL_test)
+summary(both_fe_model)
+```
+
+
+```{r}
+raw_data <- read_bulk(directory = "Population Data", 
+                      fun = read_xls)
+
+state_population = raw_data %>% select(1:6)
+names(state_population) = state_population[1,]
+state_population = state_population %>% 
+  mutate(Age = as.integer(Age),
+         Total = as.integer(Total)) %>% 
+  filter(Age < 20 & grepl( "District", `Area Name`, ignore.case = TRUE)) %>% 
+  group_by(`Area Name`) %>% 
+  summarise(kid_pop = sum(Total))
+
+
+```
+
+
+ASSUMING 2016-17 = 2016
+ASSUMING 1:5 = PRIMARY
+6:8 UPPER PRIMARY
+elementary education report card 2016-17 (andaman example), pg. 2

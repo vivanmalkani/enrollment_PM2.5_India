@@ -1,0 +1,712 @@
+---
+title: "PM2.5 Enrollment Models"
+author: "Vivan Malkani"
+date: "February 16, 2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(velox)
+library(raster)
+library(readxl)
+library(tidyverse)
+library(dplyr)
+library(sf)
+library(ncdf4)
+library(tiff)
+library(RColorBrewer)
+library(lfe)
+library(rjson)
+library(ggthemes)
+library(stringr)
+library(jtools)
+library(ggstance)
+library(huxtable)
+library(gridExtra)
+library(cowplot)
+library(ggExtra)
+library(boot)
+```
+
+
+```{r}
+india_districts = st_read("india_districts.shp")
+india_districts_sf = st_as_sf(india_districts)
+enroll_rate_PM_controls = read_csv("enrollment_PM_NL_08-13.csv",  
+                                   col_types = cols(Year = "f"))
+NL_GDP = read_csv("NL_GDP_validation.csv",
+                  col_types = cols(Year = "f") )
+```
+
+Visualizing distributions, deciding truncation and figure 1
+```{r}
+#Night Lights
+ggplot(enroll_rate_PM_controls) + 
+  geom_histogram(aes(vis_median))
+#log to obtain normal distribution and +2 to get rid of negative numbers 
+ggplot(enroll_rate_PM_controls) + 
+  geom_histogram(aes(log(vis_median+2)))
+
+#PM
+ggplot(enroll_rate_PM_controls) + 
+  geom_histogram(aes(PM_25))
+
+#SCST Enrollment
+ggplot(enroll_rate_PM_controls) + 
+  geom_histogram(aes(SCST_total_rate))
+#Truncate at 0.3
+enroll_rate_PM_controls %>% filter(SCST_total_rate < 0.4) %>% nrow() / nrow(enroll_rate_PM_controls)
+ggplot(enroll_rate_PM_controls %>% filter(SCST_total_rate < 0.4)) + 
+  geom_histogram(aes(SCST_total_rate))
+
+#Total Enrollment
+ggplot(enroll_rate_PM_controls) + 
+  geom_histogram(aes(total_rate))
+#Truncate at 0.5
+enroll_rate_PM_controls %>% filter(total_rate < 0.5) %>% nrow() / nrow(enroll_rate_PM_controls)
+ggplot(enroll_rate_PM_controls %>% filter(total_rate < 0.5)) + 
+  geom_histogram(aes(total_rate))
+
+
+
+
+analysis_data = filter(enroll_rate_PM_controls, 
+                   SCST_total_rate < 0.4, 
+                   total_rate < 0.5) %>%
+  mutate(log_vis = log(vis_median+2)) %>%
+  mutate(Year = as.factor(Year))
+
+grouped = filter(enroll_rate_PM_controls, 
+                 SCST_total_rate < 0.4, 
+                   total_rate < 0.5) %>% 
+  group_by(Year) %>% 
+  summarise(med_PM = median(PM_25),
+            lower_q_PM = quantile(PM_25, 0.25),
+            upper_q_PM = quantile(PM_25, 0.75),
+            med_rate = median(total_rate),
+            lower_rate = quantile(total_rate, 0.25),
+            upper_rate = quantile(total_rate, 0.75))
+
+#Total per 100,000
+ggplot(analysis_data) + 
+  geom_histogram(aes(total_per))
+#SCST per 100,000
+ggplot(analysis_data) + 
+  geom_histogram(aes(SCST_per))
+
+ggplot(filter(analysis_data, log(PM_25)>2.4)) + geom_histogram(aes(log(PM_25)))
+
+dep_total = lm(total_rate ~ log_vis + Year + DISTNAME,
+             data = analysis_data)
+indep = lm(PM_25 ~ log_vis + Year + DISTNAME,
+             data = analysis_data)
+
+ggplot() + geom_point(aes(indep$residuals, dep_total$residuals)) +
+  geom_smooth(aes(indep$residuals, dep_total$residuals),
+              method = "lm", color = "red")
+
+high_df = analysis_data %>% 
+         mutate(high = ifelse(total_rate>.1667,1,0)) %>% 
+         group_by(high)
+
+ggplot(data = high_df, aes(PM_25, fill = high)) + 
+  geom_histogram(alpha = 0.5, position = "identity") +  
+  geom_vline(xintercept = 15, linetype = "dashed", size = 2) + 
+  geom_vline(xintercept = mean(analysis_data$PM_25), size = 2) +
+  xlab("Median Annual PM2.5 Level (μg/m^3)") +
+  ylab("Number of Districts")+
+  theme_clean() +
+  facet_wrap(~high)
+#Secondary standards provide public welfare protection, including protection against decreased visibility and damage to animals, crops, vegetation, and buildings.
+
+analysis_data %>% group_by(Year) %>% summarize(median_PM = median(PM_25))
+```
+
+Figure 1: Visualize PM 2.5 variation
+```{r}
+visual_pm = india_districts_sf %>% 
+  rowwise() %>% 
+  mutate(median_pm = median(c(pm08, pm09, pm10, pm11, pm12, pm13))) %>%
+  ungroup() %>%
+  select(median_pm, geometry)
+
+india_districts_sf$median_pm = visual_pm$median_pm
+
+p1 = ggplot() +
+  geom_sf(data = india_districts_sf, aes(fill = median_pm), color = NA) + 
+  theme_void() +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        legend.title = element_text(face = "bold", 
+                                    size = 10),
+        legend.position = "bottom",
+        legend.box = "horizontal") +
+  scale_fill_gradient(name= "Median PM 2.5 (μg/m^3)",
+                        limits = c(0,100), 
+                        breaks=c(0,20,40,60,80,100), 
+                        na.value = "grey50")
+# p2 = ggplot(analysis_data) + 
+#   geom_point(aes(PM_25, SCST_total_rate), alpha = 0.1) + 
+#   geom_smooth(aes(PM_25, SCST_total_rate), method = "lm") +
+#   theme_classic() +
+#   theme(panel.grid.major = element_blank(), 
+#         panel.grid.minor = element_blank(),
+#         axis.title = element_text(size = 12)) +
+#   xlab("Median Annual PM2.5 Level (μg/m^3)") +
+#   ylab("SC/ST enrollment rate")
+
+p3 = ggplot(analysis_data) + 
+  geom_point(aes(PM_25, total_rate), alpha = 0.1) + 
+  geom_smooth(aes(PM_25, total_rate), method = "lm") +
+  theme_classic() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size = 10)) +
+  xlab("Median Annual PM2.5 Level (μg/m^3)") +
+  ylab("Total enrollment rate")
+
+pdf("figure1_v3.pdf", width = 7, height = 5)
+plot_grid(p3, p1, ncol = 2,labels = c("a","b"), rel_widths = c(1,1.75), label_size = 12)
+dev.off()
+```
+
+
+Creating different models
+```{r}
+linear_model_total = felm(total_rate ~ PM_25 + log_vis + total_count | Year + DISTNAME,
+             data = analysis_data)
+linear_model_SCST = felm(SCST_total_rate ~ PM_25 + log_vis + total_count | Year + DISTNAME,
+             data = analysis_data)
+
+simple_linear_total = felm(total_rate ~ PM_25|Year + DISTNAME, data = analysis_data)
+simple_linear_SCST = felm(SCST_total_rate ~ PM_25|Year + DISTNAME, data = analysis_data)
+
+no_log_total_rate = felm(total_rate ~ PM_25 + vis_median + total_count |Year + DISTNAME, data = analysis_data)
+no_log_SCST_rate = felm(SCST_total_rate ~ PM_25 + vis_median + total_count |Year + DISTNAME, data = analysis_data)
+
+
+gdp_pm_educ = inner_join(analysis_data, NL_GDP, by = c("DISTNAME", "STATNAME", "Year", 
+                                                       "total_count", "vis_median"))
+gdp_total_rate = felm(total_rate ~ PM_25 + log(GDP) + total_count |Year + DISTNAME, data = gdp_pm_educ)
+gdp_SCST_rate = felm(SCST_total_rate ~ PM_25 + log(GDP) + total_count |Year + DISTNAME, data = gdp_pm_educ)
+
+limited_NL = felm(total_rate ~ PM_25 + log_vis + total_count | Year + DISTNAME,
+             data = gdp_pm_educ)
+both_NL_GDP = felm(total_rate ~ PM_25 + log_vis + total_count + log(GDP) | Year + DISTNAME,
+             data = gdp_pm_educ)
+```
+
+SC/ST RATE OF ENROLLMENT details
+```{r}
+
+#Linear (log-log), district, SC/ST primary
+dep = lm(SCST_total_rate ~ Year + DISTNAME + log_vis, data=analysis_data)
+indep = lm(PM_25 ~ Year + DISTNAME + log_vis, data = analysis_data)
+plot(y = dep$residuals, x = indep$residuals)
+#Validity limited to +- 10% enrollment effects and +- 20 PM 2.5
+
+#Linear model, SC/ST total 
+
+summary(linear_model_SCST)
+#Check if error is normally distributed
+ggplot() + geom_histogram(aes(linear_model_SCST$residuals))
+#Check if predictions have patterns / heteroskedasticity
+ggplot() + geom_point(aes(linear_model_SCST$fitted.values, analysis_data$SCST_total_rate))
+ggplot() + geom_point(aes(analysis_data$PM_25, linear_model_SCST$residuals)) +
+  geom_smooth(aes(analysis_data$PM_25, linear_model_SCST$residuals), 
+              method = "lm")
+
+
+
+#Diagnostics: checking with only NL and only PM 2.5
+summary(felm(SCST_total_rate ~ log_vis | Year + DISTNAME,
+             data = analysis_data))
+
+summary(felm(SCST_total_rate ~ PM_25 | Year + DISTNAME,
+             data = analysis_data))
+
+summary(felm(PM_25 ~ log_vis | Year + DISTNAME,
+             data = analysis_data))
+
+```
+
+TOTAL RATE OF ENROLLMENT details
+```{r}
+
+summary(felm(total_rate ~ log_vis | Year + DISTNAME,
+             data = analysis_data))
+
+summary(felm(total_rate ~ PM_25 | Year + DISTNAME,
+             data = analysis_data))
+
+summary(felm(PM_25 ~ log_vis | Year + DISTNAME,
+             data = analysis_data))
+
+#Linear model, total 
+
+summary(linear_model_total)
+#Check if error is normally distributed
+ggplot() + geom_histogram(aes(linear_model_total$residuals))
+#Check if predictions have patterns / heteroskedasticity
+ggplot() + geom_point(aes(linear_model_total$fitted.values, analysis_data$total_rate))
+ggplot() + geom_point(aes(analysis_data$PM_25, linear_model_total$residuals)) +
+  geom_smooth(aes(analysis_data$PM_25, linear_model_total$residuals), 
+              method = "lm")
+
+
+
+#compare models - cross validate, f tests, out of sample prediction
+
+```
+
+Visualizing coefficients - Figure 2
+```{r}
+#png("Figure2_1.png")
+plot_summs(linear_model_total,
+           simple_linear_total,
+           no_year_total_rate,
+           linear_model_SCST,
+           simple_linear_SCST,
+           no_year_SCST_rate,
+           omit.coefs = "log_vis",
+           robust = TRUE,
+           model.names = c("Total: Original", 
+                           "Total: No NL",
+                           "Total: Only District FE",
+                           "SC/ST: Original", 
+                           "SC/ST: No NL",
+                           "SC/ST: Only District FE")) + 
+  xlab("PM 2.5 Coefficient Estimate") + ggtitle("Enrollment Rate per capita")
+#dev.off()
+
+
+
+#png("Figure2_2.png")
+plot_summs(linear_total_per,
+           simple_linear_total_per,
+           no_year_total_per,
+           linear_SCST_per,
+           simple_linear_SCST_per,
+           no_year_SCST_per,
+           omit.coefs = "log_vis",
+           robust = TRUE,
+           model.names = c("Total: Original",
+                           "Total: No NL",
+                           "Total: Only district FE",
+                           "SC/ST: Original",
+                           "SC/ST: No NL",
+                           "SC/ST: Only district FE")) + 
+  xlab("PM 2.5 Coefficient Estimate") + ggtitle("Enrollment Rate per 100,000")
+#dev.off()
+
+
+grouped = analysis_data %>% 
+  group_by(STATNAME) %>% 
+  summarise(b0 = coef(lm(total_rate ~ PM_25 + DISTNAME + log_vis + Year))[1],
+            b1 = coef(lm(total_rate ~ PM_25 + DISTNAME + log_vis + Year))[2])
+
+
+#Plotting PM 2.5 and Enrollment to show surprising results - likely confound
+```
+
+Bootstrap confidence intervals 
+```{r}
+
+# function to obtain regression weights
+bs <- function(formula, data, indices) {
+  d <- data[indices,] # allows boot to select sample
+  fit <- felm(formula, data=d)
+  return(coef(fit))
+}
+
+boot_error <- function(data, specification){
+# bootstrapping with R replications, put PM beta first
+results <- boot(data=data, statistic=bs,
+   R=1000, formula= specification$formula)
+return(c(quantile(results$t[,1], .025), quantile(results$t[,1], .975)))
+}
+```
+
+Figure 2 take 2
+```{r}
+model_bounds = c(boot_error(analysis_data, linear_model_total),
+                                  boot_error(gdp_pm_educ, gdp_total_rate),
+                                  boot_error(gdp_pm_educ, limited_NL),
+                                  boot_error(gdp_pm_educ, both_NL_GDP),
+                                  boot_error(analysis_data, simple_linear_total))
+
+PM_coefs_rate = tibble("Model" = c("Night Lights (n = 3027)",
+                              "GDP (n = 665)",
+                              "Night Lights (n = 665)",
+                              "GDP and Night Lights (n = 665)",
+                              "No Controls  (n = 3027)"),
+                  "lower" = model_bounds[c(1,3,5,7,9)],
+                  "upper" = model_bounds[c(2,4,6,8,10)],
+                  "coefficient" = c(summary(linear_model_total)$coefficients[1],
+                                        summary(gdp_total_rate)$coefficients[1],
+                                        summary(limited_NL)$coefficients[1],
+                                        summary(both_NL_GDP)$coefficients[1],
+                                        summary(simple_linear_total)$coefficients[1]))
+
+pdf("figure2_unscaled.pdf", height = 4, width = 7)
+ggplot(PM_coefs_rate, aes(x = Model, y = coefficient, color = Model)) +
+  geom_point(size = 2) +
+  theme_classic() +
+  geom_errorbar(aes(ymin = lower, ymax =  upper)) + 
+  geom_hline(yintercept = 0, size = 1, linetype="dashed")+ 
+  ylab("%\u0394 enrollment rate per 5 point \u0394 PM 2.5") + 
+  xlab("Model specification") +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.y = element_text(face = "bold",
+                                   size = 14),
+        axis.title = element_text(face = "bold",
+                                   size = 14), 
+        legend.title = element_text(face="bold",
+                                      size = 14),
+        plot.margin=unit(c(1,1,1,1.5),"cm")) +
+  scale_color_wsj()
+
+dev.off()
+```
+
+
+CHECKING FOR NON LINEARITY - Non-significant quadratic term for both
+```{r}
+
+#Quadratic model, SC/ST total 
+quad_model = felm(SCST_total_rate ~ poly(PM_25, 2, raw = T) + log_vis | Year + DISTNAME,
+             data= analysis_data)
+summary(quad_model)
+
+#Check if error is normally distributed
+ggplot() + geom_histogram(aes(quad_model$residuals))
+#Check if predictions have patterns / heteroskedasticity
+ggplot() + geom_point(aes(quad_model$fitted.values, analysis_data$SCST_total_rate))
+ggplot() + geom_point(aes(analysis_data$PM_25, quad_model$residuals)) +
+  geom_smooth(aes(analysis_data$PM_25, quad_model$residuals), 
+              method = "lm")
+
+#Quadratic model, total rate 
+quad_model = felm(total_rate ~ poly(PM_25, 2, raw = T) + log_vis | Year + DISTNAME,
+             data= analysis_data)
+summary(quad_model)
+
+
+ggplot() + geom_histogram(aes(quad_model$residuals))
+#Check if predictions have patterns / heteroskedasticity
+ggplot() + geom_point(aes(quad_model$fitted.values, analysis_data$total_rate))
+ggplot() + geom_point(aes(analysis_data$PM_25, quad_model$residuals)) +
+  geom_smooth(aes(analysis_data$PM_25, quad_model$residuals), 
+              method = "lm")
+```
+
+Visualization
+```{r}
+pred_sc_st_p = educ_PM$PM_25*prelim_model$coefficients[1] + educ_PM$PM_25^2*prelim_model$coefficients[2]
+
+plot(y = pred_sc_st_p, x= educ_PM$PM_25, type="p",las=1,ylab="SC/ST Primary Enrollment",xlab="PM 2.5 (micrograms per cubic meter)")
+
+hist(educ_PM$PM_25, las=1,ylab="SC/ST Primary Enrollment",xlab="PM 2.5 (micrograms per cubic meter)")
+
+educ_PM %>% 
+  group_by(STATNAME) %>% 
+  ggplot(aes(x = STATNAME, y = PM_25)) + 
+  geom_boxplot() +
+  facet_wrap(~STATNAME, scale="free")
+```
+
+
+India PM2.5
+```{r}
+
+range = seq(0,125,by = 5)
+
+png("india_districts_pm16.png")  
+plot(india_districts_sf["pm16"], breaks = range, axes = FALSE)
+title(main = "Average PM 2.5 micrograms per cubic meter in India (2016)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+
+png("india_districts_pm15.png")  
+plot(india_districts_sf["pm15"], breaks = range, axes = FALSE)
+title(main = "Average PM 2.5 micrograms per cubic meter in India (2015)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+
+png("india_districts_pm14.png")  
+plot(india_districts_sf["pm14"], breaks = range, axes = FALSE)
+title(main = "Average PM 2.5 micrograms per cubic meter in India (2014)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+
+png("india_districts_pm13.png")  
+plot(india_districts_sf["pm13"], breaks = range, axes = FALSE)
+title(main = "Average PM 2.5 micrograms per cubic meter in India (2013)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+
+png("india_districts_pm12.png")  
+plot(india_districts_sf["pm12"], breaks = range, axes = FALSE)
+title(main = "Average PM 2.5 micrograms per cubic meter in India (2012)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+
+png("india_districts_pm11.png")  
+plot(india_districts_sf["pm11"], breaks = range, axes = FALSE)
+title(main = "Average PM 2.5 micrograms per cubic meter in India (2011)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+```
+
+Mapping enrollment
+```{r}
+median_PM_dist = analysis_data %>% group_by(DISTNAME) %>% summarise(median_PM = median(PM_25))
+bad_PM_dist = analysis_data %>% group_by(DISTNAME) %>% summarise(bad_PM = sd(PM_25) + median(PM_25))
+
+base_model = lm(total_rate ~ PM_25 + log_vis + total_count + Year + DISTNAME, data=analysis_data)
+
+
+median_PM_df = inner_join(median_PM_dist, analysis_data, by = "DISTNAME") %>% mutate(PM_25 = median_PM)
+bad_PM_df = inner_join(bad_PM_dist, analysis_data, by = "DISTNAME") %>% mutate(PM_25 = bad_PM)
+
+bad_PM_df <- bad_PM_df %>% 
+  mutate(enroll_bad = predict.lm(base_model, newdata = bad_PM_df),
+         enroll_median = predict.lm(base_model, newdata = median_PM_df),
+         diff = enroll_median - enroll_bad) %>%
+  select(DISTNAME, diff) %>% unique()
+
+
+enroll_map = inner_join(mutate(india_districts_sf, DISTNAME = toupper(NAME_2)),
+           bad_PM_df,
+           by = "DISTNAME") %>% 
+  inner_join(select(analysis_data, TOT_P, DISTNAME), by = "DISTNAME") %>%
+  mutate(students_affected = diff*TOT_P)
+
+sum(enroll_map$students_affected, na.rm = T)
+
+ggplot(enroll_map) + geom_histogram(aes(students_affected))
+
+effects_map = ggplot() +
+  geom_sf(data = enroll_map, aes(fill = students_affected), color = "NA") + 
+  theme_void() +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        legend.title = element_text(face = "bold", 
+                                    size = 14),
+        legend.position = "right",
+        legend.box = "vertical",
+        plot.margin=unit(c(1,0,0,0),"cm")) +
+  scale_fill_gradient(name= "Decrease in \nEnrollment Rate \n(1000 students)", 
+                        na.value = "grey50",
+                      limits = c(0,25000), 
+                      breaks=c(0,5000,10000,15000,20000,25000))
+
+```
+
+
+Figure 3: Heterogeneity of effects
+1. Avg PM 2.5
+2. Avg. NL and avg GDP
+3. SC/ST vs. Total
+
+```{r}
+fig3_NL_data = analysis_data %>% 
+  group_by(DISTNAME) %>%
+  summarise(mean_PM_25 = mean(PM_25),
+            mean_log_vis = mean(log_vis))
+
+quantile(fig3_NL_data$mean_log_vis)
+quantile(fig3_NL_data$mean_PM_25)
+
+fig3_NL_data = inner_join(fig3_NL_data, analysis_data, by = "DISTNAME")
+
+fig3_NL_data <- fig3_NL_data %>%
+  mutate(cat_mean_log_vis = case_when(
+    mean_log_vis < 0.5787712 ~ "I",
+    mean_log_vis > 0.5787712 & mean_log_vis < 0.8658024 ~ "II",
+    mean_log_vis > 0.8658024 & mean_log_vis < 1.2351013 ~ "III",
+    TRUE ~ "IV"),
+    cat_mean_PM = case_when(
+    mean_PM_25 < 25.45 ~ "I",
+    mean_PM_25 > 25.45 & mean_PM_25 < 34.86667 ~ "II",
+    mean_PM_25 > 34.86667 & mean_PM_25 < 52.56667 ~ "III",
+    TRUE ~ "IV"))
+
+
+fig3_model = felm(total_rate ~ PM_25 + log_vis + total_count + PM_25:cat_mean_PM|Year + DISTNAME,
+                  data = fig3_NL_data)
+
+
+coef = 500*c(c(0,fig3_model$coefficients[4:6]) + fig3_model$coefficients[1])
+
+# bootstrapping with R replications, put PM beta first
+results <- boot(data=fig3_NL_data, statistic=bs,
+   R=1000, formula= fig3_model)
+e1= sd(results$t[,1])
+e2 = sqrt(sd(results$t[,4])^2 + e1^2 + 2*cov(results$t[,1], results$t[,4]))
+e3 = sqrt(sd(results$t[,5])^2 + e1^2 + 2*cov(results$t[,1], results$t[,5]))
+e4 = sqrt(sd(results$t[,6])^2 + e1^2 + 2*cov(results$t[,1], results$t[,6]))
+
+error = 500*c(e1, e2, e3, e4)
+name2 = c("I", "II", "III", "IV")
+
+p1 = ggplot(data = data.frame(coef, error, name), 
+            aes(y = coef, x = name)) + 
+  geom_point() +  
+  theme_apa() +
+  geom_errorbar(aes(ymin = coef - 1.96*error, ymax =  coef + 1.96*error)) + 
+  geom_hline(yintercept = 0, size = 1, linetype="dashed")+ 
+  ylab("% change in enrollment rate") + 
+  theme(axis.text = element_text(face = "bold",
+                                 size = 14),
+        axis.title = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        plot.margin=unit(c(1,1,0,1),"cm"))
+
+PM_hist = ggplot(fig3_NL_data) + 
+  geom_density(aes(mean_PM_25), fill = "darkgrey", alpha = 0.4) +  
+  theme_apa() +
+  xlab("Mean PM 2.5 Level (Quartiles) (μg/m^3)") +
+  ylab("Density") + 
+  theme(axis.text.x = element_text(face = "bold",
+                                 size = 14),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_text(face = "bold",
+                                  size = 14), 
+        axis.title.y = element_blank(),
+        axis.ticks = element_blank(),
+        plot.margin=unit(c(0.25,1,0.4,1),"cm"))
+
+p1 = plot_grid(p1, PM_hist, nrow = 2, rel_heights=c(4, 3))
+
+
+
+fig3_model2 = felm(total_rate ~ PM_25 + log_vis + total_count + PM_25:cat_mean_log_vis|Year + DISTNAME,
+                  data = fig3_NL_data)
+
+
+coef2 = 500*c(c(0,fig3_model2$coefficients[4:6]) + fig3_model2$coefficients[1])
+# bootstrapping with R replications, put PM beta first
+results <- boot(data=fig3_NL_data, statistic=bs,
+   R=1000, formula= fig3_model2)
+e1= sd(results$t[,1])
+e2 = sqrt(sd(results$t[,4])^2 + e1^2 + 2*cov(results$t[,1], results$t[,4]))
+e3 = sqrt(sd(results$t[,5])^2 + e1^2 + 2*cov(results$t[,1], results$t[,5]))
+e4 = sqrt(sd(results$t[,6])^2 + e1^2 + 2*cov(results$t[,1], results$t[,6]))
+
+error2 = 500*c(e1, e2, e3, e4)
+name2 = c("I", "II", "III", "IV")
+
+p2 = ggplot(data = data.frame(coef2, error2, name2), 
+            aes(y = coef2, x = name2)) + 
+  geom_point() +  
+  theme_apa() +
+  geom_errorbar(aes(ymin = coef2 - 1.96*error2, ymax =  coef2 + 1.96*error2)) + 
+  geom_hline(yintercept = 0, size = 1, linetype="dashed")+ 
+  ylab("%Δenrollment rate per 5 point ΔPM 2.5") + 
+  xlab("Mean Log Night Light Intensity (Quartiles)") +
+  theme(axis.text = element_text(face = "bold",
+                                 size = 14),
+        axis.title = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        plot.margin=unit(c(0.4,1,0,1),"cm"))
+
+vis_hist = ggplot(fig3_NL_data) + 
+  geom_density(aes(mean_log_vis), fill = "darkgrey", alpha = 0.4) +  
+  theme_apa() +
+  xlab("Mean Log Night Light Intensity (Quartiles)") +
+  ylab("Density") + 
+  theme(axis.text.x = element_text(face = "bold",
+                                   size = 14),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_text(face = "bold",
+                                  size = 14), 
+        axis.title.y = element_blank(),
+        axis.ticks = element_blank(),
+        plot.margin=unit(c(0.25,1,1,1),"cm"))
+
+p2 = plot_grid(p2, vis_hist, nrow = 2, rel_heights =c(4, 3))
+
+error3 = c(boot_error(analysis_data, total_rate ~ PM_25 + log_vis + total_count | Year + DISTNAME),
+           boot_error(analysis_data, SCST_total_rate ~ PM_25 + log_vis + total_count | Year + DISTNAME))
+
+PM_coefs_rate = tibble("Model" = c("Total: With Night Lights",
+                              "SC/ST: With Night Lights"),
+                  "error_min" = 500*c(error3[1],error3[3]),
+                  "error_max" = 500*c(error3[2],error3[4]),
+                  "coefficient" =500*c(summary(linear_model_total)$coefficients[1],
+                                        summary(linear_model_SCST)$coefficients[1]))
+
+p3 = ggplot(PM_coefs_rate, aes(x = Model, y = coefficient, color = Model)) +
+  geom_point(size = 2) +
+  theme_apa() +
+  geom_errorbar(aes(ymin = error_min, ymax =  error_max)) + 
+  geom_hline(yintercept = 0, size = 1, linetype="dashed")+ 
+  ylab("%Δenrollment rate per 5 point ΔPM 2.5") + 
+  xlab("Model Population") +
+  theme(axis.text = element_text(face = "bold",
+                                   size = 14),
+        axis.title = element_text(face = "bold",
+                                   size = 14), 
+        axis.title.y = element_blank(),
+        legend.position = "none",
+        plot.margin=unit(c(1,1,1,1),"cm")) +
+  scale_x_discrete(labels=c("Total: With Night Lights" = "Total", 
+                            "SC/ST: With Night Lights" = "SC/ST")) +
+  scale_color_wsj()
+
+
+rhs= plot_grid(p1, p2,labels = c("c","d"), nrow = 2, rel_widths = c(1,1.5), label_size = 16)
+lhs= plot_grid(effects_map, p3,labels = c("a","b"), nrow = 2, rel_heights  = c(1.5,1), label_size = 16)
+
+pdf("figure3_v3.pdf", height = 8, width = 10)
+plot_grid(lhs, rhs, ncol = 2,labels = "a", rel_widths = c(1.25,1), label_size = 16)
+dev.off()
+```
+
+
+
+```{r}
+total_effect = analysis_data %>% mutate(total_pop = (total_primary + total_upper)/total_rate,
+                         SCST_pop = (sc_st_primary+sc_st_upper)/SCST_total_rate) %>% 
+  select(DISTNAME,
+         total_pop,
+         SCST_pop)
+total_effect = total_effect %>% mutate(total_affected = total_pop*linear_model_total$coefficients[1])
+
+
+```
+
+
+
+Just PM, just NL, transformed variables effect on heteroskedasticity - for appendix
+check for which dmsp data
+send email
+drop negative NL and then see if estimate if remains the same
+check for different with no negative and negative
+email marshall for district GDP
+
+Proving the heterogeneity point:
+```{r}
+toy_df = tibble(y = c(10, 5, 8, 4),
+                x = c(5, 2.5, 6, 3),
+                sex = c("M", "M", "F", "F"))
+coef(lm(y~x, data = toy_df))[2]
+mean(coef(lm(y~x, data = filter(toy_df, sex == "F")))[2],
+     coef(lm(y~x, data = filter(toy_df, sex == "M")))[2])
+
+```
+

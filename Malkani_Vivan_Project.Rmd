@@ -1,0 +1,706 @@
+---
+title: "Air Pollution Effects on Enrollment"
+author: "Vivan Malkani"
+date: "January 15, 2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(velox)
+library(raster)
+library(readxl)
+library(tidyverse)
+library(dplyr)
+library(sf)
+library(ncdf4)
+library(tiff)
+library(RColorBrewer)
+library(lfe)
+library(rjson)
+library(ggthemes)
+library(stringr)
+```
+
+Education outcome data source: National Institute of Educational Planning and Administration "District Report Cards". Annual enrollment for each district - includes breakdown of total enrollment by gender, caste religion, etc.
+```{r}
+#Data Cleaning
+education_2011 <- read_excel("DRC_Raw_Data 2011-12.xlsx", sheet = 3) %>% slice(17:n())
+colnames(education_2011) <- education_2011[1,]
+
+#Need to aggregate enrollment by class into "primary" and "upper primary", using schema of classes 1:5 as primary and 6:8 as upper primary. Also combining scheduled caste and tribe enrollment into one bin.
+education_2011 <- education_2011 %>% 
+  slice(2:n()) %>% 
+  mutate(Year = "2011") %>%
+  dplyr::select("Year", "State Name", "distname", "Enr Cy C1":"Stg Enrup Cy") %>%
+  mutate(total_primary = as.integer(`Enr Cy C1`) + 
+           as.integer(`Enr Cy C2`) + 
+           as.integer(`Enr Cy C3`) + 
+           as.integer(`Enr Cy C4`) + 
+           as.integer(`Enr Cy C5`),
+         total_upper = as.integer(`Enr Cy C6`) + 
+           as.integer(`Enr Cy C7`) + 
+           as.integer(`Enr Cy C8`),
+         sc_st_primary = as.integer(`Sc Enrp Cy`) + as.integer(`St Enrp Cy`),
+         sc_st_upper = as.integer(`Sc Enrup Cy`) + as.integer(`St Enrup Cy`),
+         STATNAME = toupper(`State Name`),
+         DISTNAME = toupper(distname)) %>%
+  dplyr::select(Year, 
+         STATNAME, 
+         DISTNAME, 
+         total_primary, 
+         total_upper, 
+         sc_st_primary, 
+         sc_st_upper)
+
+education_2012 <- read_excel("DRC_Raw_Data 2012-13.xlsx", sheet = 3) %>% slice(17:n())
+colnames(education_2012) <- education_2012[1,]
+education_2012 <- education_2012 %>% 
+  slice(2:n()) %>% 
+  mutate(Year = "2012") %>%
+  dplyr::select(Year, "State Name", "distname", "Enr Cy C1": "Stg Enrup Cy") %>%
+  mutate(total_primary = as.integer(`Enr Cy C1`) + 
+           as.integer(`Enr Cy C2`) + 
+           as.integer(`Enr Cy C3`) + 
+           as.integer(`Enr Cy C4`) + 
+           as.integer(`Enr Cy C5`),
+         total_upper = as.integer(`Enr Cy C6`) + 
+           as.integer(`Enr Cy C7`) + 
+           as.integer(`Enr Cy C8`),
+         sc_st_primary = as.integer(`Sc Enrp Cy`) + as.integer(`St Enrp Cy`),
+         sc_st_upper = as.integer(`Sc Enrup Cy`) + as.integer(`St Enrup Cy`),
+         STATNAME = toupper(`State Name`),
+         DISTNAME = toupper(distname)) %>%
+  dplyr::select(Year, 
+         STATNAME, 
+         DISTNAME, 
+         total_primary, 
+         total_upper, 
+         sc_st_primary, 
+         sc_st_upper)
+
+education_2013 <- read_excel("DRC_Raw_Data 2013-14.xlsx", sheet = 3) %>% slice(17:n())
+colnames(education_2013) <- education_2013[1,]
+education_2013 <- education_2013 %>%
+  slice(2:n()) %>%
+  mutate(Year = "2013") %>%
+  dplyr::select(Year, "State Name", "distname", "Enr Cy C1": "Stg Enrup Cy") %>%
+  mutate(total_primary = as.integer(`Enr Cy C1`) + 
+           as.integer(`Enr Cy C2`) + 
+           as.integer(`Enr Cy C3`) + 
+           as.integer(`Enr Cy C4`) + 
+           as.integer(`Enr Cy C5`),
+         total_upper = as.integer(`Enr Cy C6`) + 
+           as.integer(`Enr Cy C7`) + 
+           as.integer(`Enr Cy C8`),
+         sc_st_primary = as.integer(`Sc Enrp Cy`) + as.integer(`St Enrp Cy`),
+         sc_st_upper = as.integer(`Sc Enrup Cy`) + as.integer(`St Enrup Cy`),
+         STATNAME = toupper(`State Name`),
+         DISTNAME = toupper(distname)) %>%
+  dplyr::select(Year, 
+         STATNAME, 
+         DISTNAME, 
+         total_primary, 
+         total_upper, 
+         sc_st_primary, 
+         sc_st_upper)
+
+education_2014 <- read_excel("DRC_Raw_Data 2014-15.xlsx", sheet = 2)  %>% slice(19:n())
+education_2014[1,1] = "Year"
+colnames(education_2014) = education_2014[1,]
+education_2014 <- education_2014 %>% slice(2:n()) %>% 
+  dplyr::select("Year", "STATNAME", "DISTNAME", "C1_B":"C9_G", "SCPTOT":"STUTOT_G") %>%
+  mutate(total_primary = as.integer(C1_B) + 
+           as.integer(C2_B) + 
+           as.integer(C3_B) + 
+           as.integer(C4_B) + 
+           as.integer(C5_B) +
+           as.integer(C1_G) + 
+           as.integer(C2_G) + 
+           as.integer(C3_G) + 
+           as.integer(C4_G) + 
+           as.integer(C5_G),
+         total_upper = as.integer(C6_B) + 
+           as.integer(C7_B) + 
+           as.integer(C8_B) +
+           as.integer(C6_G) + 
+           as.integer(C7_G) + 
+           as.integer(C8_G),
+         sc_st_primary = as.integer(SCPTOT) + as.integer(STPTOT),
+         sc_st_upper = as.integer(SCUTOT) + as.integer(STUTOT),
+         Year = "2014",
+         STATNAME = toupper(STATNAME),
+         DISTNAME = toupper(DISTNAME)) %>%
+  dplyr::select(Year, 
+         STATNAME,
+         DISTNAME, 
+         total_primary, 
+         total_upper, 
+         sc_st_primary, 
+         sc_st_upper)
+
+education_2015 <- read_excel("DRC_Raw_Data 2015-16_new.xlsx", sheet = 2) %>% slice(19:n())
+education_2015[1,1] = "Year"
+colnames(education_2015) = education_2015[1,]
+education_2015 <- education_2015 %>% slice(2:n()) %>% 
+  dplyr::select("Year", "STATNAME", "DISTNAME", "C1_B":"C9_G", "SCPTOT":"STUTOT_G") %>% 
+  mutate(total_primary = as.integer(C1_B) + 
+           as.integer(C2_B) + 
+           as.integer(C3_B) + 
+           as.integer(C4_B) + 
+           as.integer(C5_B) +
+           as.integer(C1_G) + 
+           as.integer(C2_G) + 
+           as.integer(C3_G) + 
+           as.integer(C4_G) + 
+           as.integer(C5_G),
+         total_upper = as.integer(C6_B) + 
+           as.integer(C7_B) + 
+           as.integer(C8_B) +
+           as.integer(C6_G) + 
+           as.integer(C7_G) + 
+           as.integer(C8_G),
+         sc_st_primary = as.integer(SCPTOT) + as.integer(STPTOT),
+         sc_st_upper = as.integer(SCUTOT) + as.integer(STUTOT),
+         Year = "2015",
+         STATNAME = toupper(STATNAME),
+         DISTNAME = toupper(DISTNAME)) %>%
+  dplyr::select(Year, 
+         STATNAME,
+         DISTNAME, 
+         total_primary, 
+         total_upper, 
+         sc_st_primary, 
+         sc_st_upper)
+
+education_2016 <- read_excel("DRC_Raw_Data 2016-17.xlsx", sheet = 2) %>% slice(21:n())
+education_2016[1,1] = "Year"
+colnames(education_2016) = education_2016[1,]
+education_2016 <- education_2016 %>% slice(2:n()) %>% 
+  dplyr::select("Year", "STATNAME", "DISTNAME", "C1_B":"C9_G", "SCPTOT":"STUTOT_G") %>% 
+  mutate(total_primary = as.integer(C1_B) + 
+           as.integer(C2_B) + 
+           as.integer(C3_B) + 
+           as.integer(C4_B) + 
+           as.integer(C5_B) +
+           as.integer(C1_G) + 
+           as.integer(C2_G) + 
+           as.integer(C3_G) + 
+           as.integer(C4_G) + 
+           as.integer(C5_G),
+         total_upper = as.integer(C6_B) + 
+           as.integer(C7_B) + 
+           as.integer(C8_B) +
+           as.integer(C6_G) + 
+           as.integer(C7_G) + 
+           as.integer(C8_G),
+         sc_st_primary = as.integer(SCPTOT) + as.integer(STPTOT),
+         sc_st_upper = as.integer(SCUTOT) + as.integer(STUTOT),
+         Year = "2016",
+         STATNAME = toupper(STATNAME),
+         DISTNAME = toupper(DISTNAME)) %>%
+  dplyr::select(Year, 
+         STATNAME,
+         DISTNAME, 
+         total_primary, 
+         total_upper, 
+         sc_st_primary, 
+         sc_st_upper)
+
+enrollment_data <- bind_rows(education_2011,
+                             education_2012,
+                             education_2013,
+                             education_2014,
+                             education_2015,
+                             education_2016)
+
+rm(education_2011, 
+   education_2012,
+   education_2013,
+   education_2014,
+   education_2015,
+   education_2016)
+```
+
+India districts shapefile and PM2.5 data.
+India map: Database of Global Administrative Areas
+PM 2.5: Global Annual PM2.5 Grids from MODIS, MISR and SeaWiFS Aerosol Optical Depth (AOD) with GWR, v1 (1998-2016)
+```{r}
+india_districts = read_rds("gadm36_IND_2_sp.rds")
+india_districts@data
+
+#read in distinct global annual PM2.5 files and limit extent to India
+pm25_2011= raster("gwr_pm25_2011.tif") %>% crop(extent(india_districts))
+pm25_2012= raster("gwr_pm25_2012.tif") %>% crop(extent(india_districts))
+pm25_2013= raster("gwr_pm25_2013.tif") %>% crop(extent(india_districts))
+pm25_2014= raster("gwr_pm25_2014.tif") %>% crop(extent(india_districts))
+pm25_2015= raster("gwr_pm25_2015.tif") %>% crop(extent(india_districts))
+pm25_2016= raster("gwr_pm25_2016.tif") %>% crop(extent(india_districts))
+
+pm_velox11 <- velox(pm25_2011) 
+pm_velox12 <- velox(pm25_2012)
+pm_velox13 <- velox(pm25_2013)
+pm_velox14 <- velox(pm25_2014)
+pm_velox15 <- velox(pm25_2015)
+pm_velox16 <- velox(pm25_2016)
+
+#extract PM2.5 reading for each district polygon for each year
+pmVals_11 <- pm_velox11$extract(sp = india_districts, small = T)  #pm 2.5 readings for each district
+pmVals_12 <- pm_velox12$extract(sp = india_districts, small = T)
+pmVals_13 <- pm_velox13$extract(sp = india_districts, small = T)
+pmVals_14 <- pm_velox14$extract(sp = india_districts, small = T)
+pmVals_15 <- pm_velox15$extract(sp = india_districts, small = T)
+pmVals_16 <- pm_velox16$extract(sp = india_districts, small = T)
+
+#mean pm 2.5 reading for each district for each year
+india_districts@data$pm11 <- lapply(pmVals_11, function(x){mean(x, na.rm = T)}) %>% 
+  unlist() 
+india_districts@data$pm12 <- lapply(pmVals_12, function(x){mean(x, na.rm = T)}) %>% 
+  unlist() 
+india_districts@data$pm13 <- lapply(pmVals_13, function(x){mean(x, na.rm = T)}) %>% 
+  unlist() 
+india_districts@data$pm14 <- lapply(pmVals_14, function(x){mean(x, na.rm = T)}) %>% 
+  unlist() 
+india_districts@data$pm15 <- lapply(pmVals_15, function(x){mean(x, na.rm = T)}) %>% 
+  unlist() 
+india_districts@data$pm16 <- lapply(pmVals_16, function(x){mean(x, na.rm = T)}) %>% 
+  unlist() 
+
+india_districts_sf <- st_as_sf(india_districts)
+
+rm(pm_velox11, pm_velox12, pm_velox13, pm_velox14, pm_velox15, pm_velox16,
+   pmVals_11, pmVals_12, pmVals_13, pmVals_14, pmVals_15, pmVals_16,
+   pm25_2011, pm25_2012, pm25_2013, pm25_2014, pm25_2015, pm25_2016)
+```
+
+Downloading economic activity proxy: Night lights for economic activity proxy
+```{r}
+states = fromJSON(file = "http://api.nightlights.io/months/2008.1-2013.12/states")
+state_names = vector()
+for(i in 1:length(states)){
+state_names[i] = states[[i]]$key
+}
+state_names = state_names %>% unique()
+
+start_link = "http://api.nightlights.io/months/2008.1-2013.12/states/"
+end_link = "/districts"
+
+nightlights_districts = tibble("DISTNAME" = NA, "year" = NA, "month" = NA, "vis_median" = NA, "count" = NA)
+
+for(i in 1:length(state_names)){
+  state_data <- fromJSON(file = paste0(start_link,state_names[i],end_link))
+  for(j in 1:length(state_data)){
+    nightlights_districts = rbind(nightlights_districts, 
+                                      c(state_data[[j]]$key,
+                                        state_data[[j]]$year,
+                                        state_data[[j]]$month,
+                                        state_data[[j]]$vis_median,
+                                        state_data[[j]]$count))
+  }
+}
+nightlights_districts = slice(nightlights_districts, 2:n())
+
+```
+
+Converting to annual mean median visual intensity score for each district-year
+```{r}
+nightlights_annual = nightlights_districts %>% 
+  group_by(DISTNAME, year) %>%
+  summarise(vis_median = median(as.numeric(vis_median)),
+            total_count = sum(as.numeric(count))) %>% 
+  arrange(DISTNAME, year)
+state_names <- state_names %>% sort()
+
+nightlights_annual$STATNAME = NA
+for(i in 1:length(state_names)){
+  for(j in 1:nrow(nightlights_annual)){
+    if(str_detect(nightlights_annual$DISTNAME[j], state_names[i])) {
+      nightlights_annual$DISTNAME[j] = str_remove(nightlights_annual$DISTNAME[j], 
+                                                  paste0(state_names[i], 
+                                                         "-")) %>% 
+        str_replace_all("-", " ") %>%
+        toupper()
+      nightlights_annual$STATNAME[j] = str_replace_all(state_names[i], "-", " ") %>% 
+        toupper()
+    }
+  }
+}
+
+
+
+```
+
+
+The Merge: joining by district name. Not using districts which have no education data.
+```{r}
+
+district_data = bind_cols("DISTNAME" = toupper(india_districts@data$NAME_2),
+                          "STATNAME" = toupper(india_districts@data$NAME_1),
+                          "2011" = india_districts@data$pm11,
+                          "2012" = india_districts@data$pm12,
+                          "2013" = india_districts@data$pm13,
+                          "2014" = india_districts@data$pm14,
+                          "2015" = india_districts@data$pm15,
+                          "2016" = india_districts@data$pm16)
+
+d_names = district_data$STATNAME %>% unique() %>% sort()
+e_names = enrollment_data$STATNAME %>% unique() %>% sort()
+
+#Name alignment for join
+d_names[!d_names %in% e_names]
+e_names[!e_names %in% d_names]
+
+enrollment_data = enrollment_data %>%
+  mutate(
+    STATNAME = case_when(
+      STATNAME == "A & N ISLANDS"|
+        STATNAME == "ANDAMAN & NICOBAR ISLANDS" ~ "ANDAMAN AND NICOBAR",
+      STATNAME == "CHHATISGARH" ~ "CHHATTISGARH",
+      STATNAME == "D & N HAVELI"|
+        STATNAME == "DADRA & NAGAR HAVELI" ~ "DADRA AND NAGAR HAVELI",
+      STATNAME == "DAMAN & DIU" ~ "DAMAN AND DIU",
+      STATNAME == "ORISSA" ~ "ODISHA",
+      STATNAME == "JAMMU & KASHMIR" ~ "JAMMU AND KASHMIR",
+      STATNAME == "DELHI" ~ "NCT OF DELHI",
+      TRUE ~ STATNAME
+    )
+  )
+
+
+rm(d_names, e_names)
+
+district_data <- gather(district_data, "Year", "PM_25", -c(STATNAME, DISTNAME))
+
+#for now, disregard all spelling inconsistencies between districts in each data set
+educ_PM = inner_join(district_data,
+                    enrollment_data, 
+                    by = c("DISTNAME", "STATNAME", "Year"))
+
+head(educ_PM, 5)
+
+```
+Population data (Census 2011) to convert enrollment to rate
+```{r}
+ census = read_excel("DDW_PCA0000_2011_Indiastatedist.xlsx", sheet = 1)
+ 
+ households = census %>% 
+   select(Level, Name, TRU, P_SC, P_ST) %>% 
+   filter(Level == "DISTRICT" & TRU == "Total") %>%
+   mutate(DISTNAME = toupper(Name)) %>%
+   select(-Name, -Level, -TRU)
+
+educ_PM_census = inner_join(educ_PM,
+                     households, 
+                     by = c("DISTNAME"))
+
+educ_PM_census <- educ_PM_census %>% 
+  mutate(SCST_total_rate = (sc_st_primary + sc_st_upper)/(P_SC + P_ST))
+rm(educ_PM)
+```
+
+Bringing in night light controls
+```{r}
+
+d_names = educ_PM_census$STATNAME %>% unique() %>% sort()
+e_names = nightlights_annual$STATNAME %>% unique() %>% sort()
+
+#Name alignment for join
+d_names[!d_names %in% e_names]
+e_names[!e_names %in% d_names]
+
+nightlights_annual = nightlights_annual %>%
+  mutate(
+    STATNAME = case_when(
+      STATNAME == "TAMILNADU" ~ "TAMIL NADU",
+      STATNAME == "ORISSA" ~ "ODISHA",
+      STATNAME == "JAMMU & KASHMIR" ~ "JAMMU AND KASHMIR",
+      STATNAME == "DELHI" ~ "NCT OF DELHI",
+      TRUE ~ STATNAME
+    )
+  )
+
+enroll_rate_PM_controls = inner_join(educ_PM_census, nightlights_annual, by = c("DISTNAME", "STATNAME", "Year" = "year"))
+rm(educ_PM_census)
+```
+
+
+
+```{r}
+ungrouped = filter(enroll_rate_PM_controls, DISTNAME != "MAHE")
+
+grouped = filter(enroll_rate_PM_controls, DISTNAME != "MAHE") %>% 
+  group_by(Year) %>% 
+  summarise(med_PM = median(PM_25),
+            lower_q_PM = quantile(PM_25, 0.25),
+            upper_q_PM = quantile(PM_25, 0.75),
+            b0 = coef(lm(SCST_total_rate ~ PM_25))[1],
+            b1 = coef(lm(SCST_total_rate ~ PM_25))[2])
+
+#Plotting PM 2.5 and Enrollment to show surprising results - likely confound
+jpeg("Figure1_PM_enrollment.jpeg", quality = 100) 
+ggplot() + geom_point(data = ungrouped,
+                      aes(x = PM_25, y = SCST_total_rate),
+                      size = 1,
+                      alpha = 1/5) + 
+  geom_smooth(data = ungrouped, aes(x = PM_25, y = SCST_total_rate), method = "lm", se = TRUE) + 
+  xlab("PM 2.5 Concentration Levels (micrograms per cubic meter)") +
+  ylab("Enrollment Rate from SC/ST Population") + 
+  theme(axis.title = element_text(size=18, face = "bold"),
+        axis.text = element_text(size = 12, face = "bold")) +
+  geom_vline(data = grouped, aes(xintercept = med_PM)) + 
+  geom_vline(data = grouped, aes(xintercept = lower_q_PM), linetype = "dashed") +
+  geom_vline(data = grouped, aes(xintercept = upper_q_PM), linetype = "dashed") +
+  theme_few() + 
+  facet_wrap(~Year) + 
+  theme(panel.spacing = unit(1.5, "lines"))
+dev.off()
+
+
+#Plotting with night light
+ggplot(ungrouped) + 
+  geom_histogram(aes(vis_median))
+
+ggplot(ungrouped %>% filter(vis_median < 10)) + 
+  geom_point(aes(vis_median, SCST_total_rate, color = PM_25)) + 
+  geom_smooth(aes(vis_median, SCST_total_rate), method = "lm") +
+  theme_clean()
+
+  
+```
+
+India map enrollment plotting
+```{r}
+# 
+# scst2011 <- educ_PM %>% filter(Year == 2011) %>% select(STATNAME, DISTNAME, SCST2011 = SCST_total)
+# scst2012 <- educ_PM %>% filter(Year == 2012) %>% select(STATNAME, DISTNAME, SCST2012 = SCST_total)
+# scst2013 <- educ_PM %>% filter(Year == 2013) %>% select(STATNAME, DISTNAME, SCST2013 = SCST_total)
+# scst2014 <- educ_PM %>% filter(Year == 2014) %>% select(STATNAME, DISTNAME, SCST2014 = SCST_total)
+# scst2015 <- educ_PM %>% filter(Year == 2015) %>% select(STATNAME, DISTNAME, SCST2015 = SCST_total)
+# scst2016 <- educ_PM %>% filter(Year == 2016) %>% select(STATNAME, DISTNAME, SCST2016 = SCST_total)
+# 
+# india_districts_sf <- st_as_sf(india_districts)
+# 
+# india_districts_sf = india_districts_sf %>% mutate(STATNAME = toupper(NAME_1),
+#                                                    DISTNAME = toupper(NAME_2))
+# 
+# india_districts_sf =  inner_join(india_districts_sf,
+#                                  scst2011,
+#                                  by = c("STATNAME", "DISTNAME"))
+# india_districts_sf =  inner_join(india_districts_sf,
+#                                  scst2012,
+#                                  by = c("STATNAME", "DISTNAME"))
+# india_districts_sf =  inner_join(india_districts_sf,
+#                                  scst2013,
+#                                  by = c("STATNAME", "DISTNAME"))
+# india_districts_sf =  inner_join(india_districts_sf,
+#                                  scst2014,
+#                                  by = c("STATNAME", "DISTNAME"))
+# india_districts_sf =  inner_join(india_districts_sf,
+#                                  scst2015,
+#                                  by = c("STATNAME", "DISTNAME"))
+# india_districts_sf =  inner_join(india_districts_sf,
+#                                  scst2016,
+#                                  by = c("STATNAME", "DISTNAME"))
+# 
+# rm(scst2011, scst2012, scst2013, scst2014, scst2015, scst2016)
+
+```
+
+Figure 1 plotting
+India PM2.5
+```{r}
+
+range = seq(0,125,by = 5)
+
+png("india_districts_pm16.png")  
+plot(india_districts_sf["pm16"], breaks = range, axes = FALSE)
+title(main = "Average PM 2.5 micrograms per cubic meter in India (2016)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+
+png("india_districts_pm15.png")  
+plot(india_districts_sf["pm15"], breaks = range, axes = FALSE)
+title(main = "Average PM 2.5 micrograms per cubic meter in India (2015)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+
+png("india_districts_pm14.png")  
+plot(india_districts_sf["pm14"], breaks = range, axes = FALSE)
+title(main = "Average PM 2.5 micrograms per cubic meter in India (2014)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+
+png("india_districts_pm13.png")  
+plot(india_districts_sf["pm13"], breaks = range, axes = FALSE)
+title(main = "Average PM 2.5 micrograms per cubic meter in India (2013)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+
+png("india_districts_pm12.png")  
+plot(india_districts_sf["pm12"], breaks = range, axes = FALSE)
+title(main = "Average PM 2.5 micrograms per cubic meter in India (2012)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+
+png("india_districts_pm11.png")  
+plot(india_districts_sf["pm11"], breaks = range, axes = FALSE)
+title(main = "Average PM 2.5 micrograms per cubic meter in India (2011)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+```
+
+Enrollment trends plotting, India map
+
+```{r}
+ggplot(india_districts_sf) + geom_histogram(aes(SCST2016), bins = 100)
+ggplot(india_districts_sf) + geom_histogram(aes(SCST2015), bins = 100)
+ggplot(india_districts_sf) + geom_histogram(aes(SCST2014), bins = 100)
+ggplot(india_districts_sf) + geom_histogram(aes(SCST2013), bins = 100)
+ggplot(india_districts_sf) + geom_histogram(aes(SCST2012), bins = 100)
+ggplot(india_districts_sf) + geom_histogram(aes(SCST2011), bins = 100)
+
+range = seq(-4,4,by = 0.4)
+
+png("india_districts_scst16.png")  
+plot(india_districts_sf["SCST2016"], breaks = range, axes = FALSE)
+title(main = "Relative change in Enrollment of SC/ST Students (2016)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+
+png("india_districts_scst15.png")  
+plot(india_districts_sf["SCST2015"], breaks = range, axes = FALSE)
+title(main = "Relative change in Enrollment of SC/ST Students (2015)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+
+png("india_districts_scst14.png")  
+plot(india_districts_sf["SCST2014"], breaks = range, axes = FALSE)
+title(main = "Relative change in Enrollment of SC/ST Students (2014)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+
+png("india_districts_scst13.png")  
+plot(india_districts_sf["SCST2013"], breaks = range, axes = FALSE)
+title(main = "Relative Change in Enrollment of SC/ST Students (2013)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+
+png("india_districts_scst12.png")  
+plot(india_districts_sf["SCST2012"], breaks = range, axes = FALSE)
+title(main = "Relative change in Enrollment of SC/ST Students (2012)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+
+png("india_districts_scst11.png")  
+plot(india_districts_sf["SCST2011"], breaks = range, axes = FALSE)
+title(main = "Relative change in Enrollment of SC/ST Students (2011)",
+      cex.main = 1,
+      font.main= 4)
+dev.off()
+```
+
+
+```{r}
+#bootstrap standard errors and plotting results
+set.seed(1)
+
+#Linear (log-log), district, SC/ST primary
+dep = lm(log(SCST_total_rate) ~ Year + DISTNAME + vis_median, data=enroll_rate_PM_controls)
+indep = lm(log(PM_25) ~ Year + DISTNAME + vis_median, data=enroll_rate_PM_controls)
+plot(y = dep$residuals, x = indep$residuals)
+
+#This is the data that you are visualizing
+
+#Linear model, SC/ST total 
+summary(felm(SCST_total_rate ~ PM_25 + vis_median | Year + DISTNAME,
+             data=enroll_rate_PM_controls))
+
+#Log- Linear model, SC/ST total 
+summary(felm(log(SCST_total_rate) ~ PM_25 + vis_median | Year + DISTNAME,
+             data=enroll_rate_PM_controls))
+
+#Log - log model, SC/ST total 
+summary(felm(log(SCST_total_rate) ~ log(PM_25) + vis_median | Year + DISTNAME,
+             data=enroll_rate_PM_controls))
+
+#Quadratic model, SC/ST total 
+summary(felm(SCST_total_rate ~ poly(PM_25, 2, raw = T) + vis_median | Year + DISTNAME,
+             data=enroll_rate_PM_controls))
+
+
+#compare distributions of CV error
+
+
+
+
+#see residual variation after regressing both independent and dependent on the fixed effects and plot actual residuals vs each other
+#think about potential confounds that aren't handled by fixed effects (varying across state and time)
+#log everything
+#get confounds data - agriculture, income
+#compare models - cross validate, f tests, out of sample prediction
+
+```
+
+
+Bootstrap
+```{r}
+b = 1000
+n = nrow(educ_PM)
+
+bootstrap<- function(){
+  new_data = sample_n(educ_PM, n, replace = T)
+  model = felm(sc_st_primary ~ poly(PM_25, 2, raw = T) | Year + STATNAME, data=new_data)
+  coefficients = data.frame(model$coefficients)
+  return(as.matrix(coefficients))
+}
+
+#creating sampling distribution of coefficient estimates
+coef <- data.frame("b1"= 0, "b2" = 0)
+for(i in 1:b){
+  results = bootstrap()
+  coef[i,1] = results[1]
+  coef[i,2] = results[2]
+}
+
+#bootstrapped standard errors
+sd(coef[,1])
+sd(coef[,2])
+
+
+```
+
+Visualization
+```{r}
+pred_sc_st_p = educ_PM$PM_25*prelim_model$coefficients[1] + educ_PM$PM_25^2*prelim_model$coefficients[2]
+
+plot(y = pred_sc_st_p, x= educ_PM$PM_25, type="p",las=1,ylab="SC/ST Primary Enrollment",xlab="PM 2.5 (micrograms per cubic meter)")
+
+hist(educ_PM$PM_25, las=1,ylab="SC/ST Primary Enrollment",xlab="PM 2.5 (micrograms per cubic meter)")
+
+educ_PM %>% 
+  group_by(STATNAME) %>% 
+  ggplot(aes(x = STATNAME, y = PM_25)) + 
+  geom_boxplot() +
+  facet_wrap(~STATNAME, scale="free")
+```
+
+*NOTES*
+ADD CONTROLS LIKE ECONOMIC DEVELOPMENT: INCOME
+ASSUMING 2016-17 = 2016
+ASSUMING 1:5 = PRIMARY
+6:8 UPPER PRIMARY
+elementary education report card 2016-17 (andaman example), pg. 2
